@@ -131,7 +131,7 @@ h1 {
 
 .controls {
   display: grid;
-  grid-template-columns: 1.5fr 1fr auto auto;
+  grid-template-columns: 1.4fr 1.4fr 1fr auto auto;
   gap: 12px;
   align-items: end;
   margin-bottom: 18px;

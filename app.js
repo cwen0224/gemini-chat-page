@@ -1,4 +1,5 @@
 const apiKeyInput = document.getElementById("apiKey");
+const proxyUrlInput = document.getElementById("proxyUrl");
 const modelSelect = document.getElementById("model");
 const promptInput = document.getElementById("prompt");
 const chat = document.getElementById("chat");
@@ -14,6 +15,7 @@ const STORAGE_KEY = "gemini-chat-state";
 const state = {
   messages: [],
   apiKey: "",
+  proxyUrl: "",
   model: "gemini-2.5-flash",
   revealKey: false,
 };
@@ -22,6 +24,7 @@ function loadState() {
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
     state.apiKey = saved.apiKey || "";
+    state.proxyUrl = saved.proxyUrl || "";
     state.model = saved.model || state.model;
     state.messages = Array.isArray(saved.messages) ? saved.messages : [];
     state.revealKey = Boolean(saved.revealKey);
@@ -35,6 +38,7 @@ function saveState() {
     STORAGE_KEY,
     JSON.stringify({
       apiKey: state.apiKey,
+      proxyUrl: state.proxyUrl,
       model: state.model,
       messages: state.messages,
       revealKey: state.revealKey,
@@ -88,6 +92,7 @@ function renderAllMessages() {
 
 function syncControls() {
   apiKeyInput.value = state.apiKey;
+  proxyUrlInput.value = state.proxyUrl;
   modelSelect.value = state.model;
   apiKeyInput.type = state.revealKey ? "text" : "password";
   toggleKeyButton.textContent = state.revealKey ? "Hide" : "Show";
@@ -154,6 +159,55 @@ async function callGemini(prompt, history) {
   return text;
 }
 
+function buildProxyUrl(proxyUrl, params) {
+  const url = new URL(proxyUrl);
+  Object.entries(params).forEach(([key, value]) => {
+    url.searchParams.set(key, value);
+  });
+  return url.toString();
+}
+
+function callGasProxy(prompt, history) {
+  return new Promise((resolve, reject) => {
+    const callbackName = `geminiProxy_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    const script = document.createElement("script");
+    const timeout = window.setTimeout(() => cleanup(new Error("Proxy request timed out.")), 30000);
+    const payloadHistory = history.slice(-12);
+
+    function cleanup(error) {
+      window.clearTimeout(timeout);
+      delete window[callbackName];
+      script.remove();
+      if (error) {
+        reject(error);
+      }
+    }
+
+    window[callbackName] = (response) => {
+      cleanup();
+      if (!response || response.ok !== true) {
+        reject(new Error(response?.error || "Proxy request failed."));
+        return;
+      }
+      resolve(response.text);
+    };
+
+    script.onerror = () => cleanup(new Error("Could not reach the GAS proxy."));
+
+    try {
+      script.src = buildProxyUrl(state.proxyUrl, {
+        callback: callbackName,
+        model: state.model,
+        prompt,
+        history: JSON.stringify(payloadHistory),
+      });
+      document.body.appendChild(script);
+    } catch (error) {
+      cleanup(error);
+    }
+  });
+}
+
 async function handleSubmit(event) {
   event.preventDefault();
 
@@ -163,10 +217,11 @@ async function handleSubmit(event) {
   }
 
   state.apiKey = apiKeyInput.value.trim();
+  state.proxyUrl = proxyUrlInput.value.trim();
   state.model = modelSelect.value;
   const history = state.messages.slice();
 
-  if (!state.apiKey) {
+  if (!state.proxyUrl && !state.apiKey) {
     setStatus("error", "Please enter an API key");
     return;
   }
@@ -176,13 +231,15 @@ async function handleSubmit(event) {
   pushMessage("user", prompt);
   promptInput.value = "";
 
-  setStatus("ready", "Sending...");
+  setStatus("ready", state.proxyUrl ? "Sending via GAS..." : "Sending...");
   sendButton.disabled = true;
 
   const assistantBubble = renderMessage("assistant", "Thinking...");
 
   try {
-    const assistantText = await callGemini(prompt, history);
+    const assistantText = state.proxyUrl
+      ? await callGasProxy(prompt, history)
+      : await callGemini(prompt, history);
     assistantBubble.textContent = assistantText;
     state.messages.push({ role: "assistant", text: assistantText });
     saveState();
@@ -212,6 +269,11 @@ function toggleApiKeyVisibility() {
 
 apiKeyInput.addEventListener("input", () => {
   state.apiKey = apiKeyInput.value.trim();
+  saveState();
+});
+
+proxyUrlInput.addEventListener("input", () => {
+  state.proxyUrl = proxyUrlInput.value.trim();
   saveState();
 });
 
