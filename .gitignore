@@ -1,0 +1,17 @@
+# OS junk
+Thumbs.db
+Desktop.ini
+
+# GitHub Pages / static hosting
+.DS_Store
+
+# Editor folders
+.vscode/
+.idea/
+
+# Local secrets
+.env
+.env.*
+
+# Optional logs
+*.log
